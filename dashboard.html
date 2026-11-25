@@ -1,0 +1,500 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width,initial-scale=1">
+    <meta name="dashboard-token" content="__CSRF_TOKEN__">
+    <title>Capture Relay</title>
+    <style>
+        html { color-scheme: dark; font: 16px/1.5 system-ui, sans-serif; background: #111b21; color: #e7eef4; }
+        body { max-width: 1560px; margin: 36px auto; padding: 0 20px; }
+        h1 { font-size: 1.65rem; margin: 0 0 12px; }
+        p { margin: 8px 0 14px; }
+        .toolbar { display: flex; flex-wrap: wrap; gap: 8px; margin: 12px 0; }
+        button, input, select { font: inherit; color: inherit; border: 1px solid #526878; border-radius: 6px; background: #233441; }
+        button { padding: 6px 13px; cursor: pointer; }
+        button:disabled { opacity: .5; cursor: default; }
+        #start { background: #205948; }
+        #stop { background: #622c37; }
+        #monitor { color: #b9cddc; font-size: .9rem; }
+        #message { min-height: 1.5em; }
+        #error { color: #ffacac; }
+        #error:empty { display: none; }
+        canvas { display: block; width: 100%; background: #0a1014; border-radius: 8px; touch-action: none; }
+        canvas.calibrating { cursor: crosshair; }
+        fieldset { border: 1px solid #526878; border-radius: 6px; margin: 16px 0; padding: 12px; }
+        label { display: inline-block; margin: 4px 12px 4px 0; }
+        input { width: 5em; padding: 3px 7px; }
+        .workspace { display: grid; grid-template-columns: minmax(0, 1fr) minmax(340px, 390px); gap: 24px; align-items: start; }
+        .action-log { position: sticky; top: 20px; min-width: 0; border: 1px solid #526878; border-radius: 8px; }
+        .action-log h2 { margin: 0; padding: 10px 12px; font-size: 1rem; }
+        .log-scroll { max-height: min(72vh, 780px); overflow: auto; overscroll-behavior: contain; }
+        .log-scroll:focus-visible { outline: 2px solid #70d6ff; outline-offset: 2px; }
+        .action-log table { width: 100%; border-spacing: 0; font-size: .82rem; }
+        .action-log th, .action-log td { padding: 7px 8px; text-align: left; vertical-align: top; }
+        .action-log th { position: sticky; top: 0; z-index: 1; background: #233441; }
+        .action-log td { border-top: 1px solid #344858; overflow-wrap: anywhere; }
+        .log-time { white-space: nowrap; font-variant-numeric: tabular-nums; }
+        .log-label { color: #b9cddc; }
+        @media (max-width: 960px) {
+            .workspace { grid-template-columns: minmax(0, 1fr); }
+            .action-log { position: static; }
+            .log-scroll { max-height: 420px; }
+        }
+    </style>
+</head>
+<body>
+    <h1>Capture Relay</h1>
+    <main class="workspace">
+        <section aria-label="Capture and controls">
+            <p id="message" role="status">Connecting to the capture feed.</p>
+            <p id="error" role="alert"></p>
+            <label>Detector
+                <select id="detection" disabled>
+                    <option value="v1">V1 · Bobber motion</option>
+                    <option value="v2">V2 · Interact icon and splash fingerprint</option>
+                </select>
+            </label>
+            <div class="toolbar">
+                <button id="preview" disabled>Preview only</button>
+                <button id="freeze" disabled>Freeze frame to calibrate</button>
+                <button id="freeze-bar" disabled>Calibrate casting bar</button>
+                <button id="freeze-icon" hidden disabled>Calibrate interact icon</button>
+                <button id="start" disabled>Start</button>
+                <button id="stop" disabled>Stop</button>
+            </div>
+            <fieldset id="calibration" hidden>
+                <legend>Calibration</legend>
+                <p id="instruction"></p>
+                <div id="water-settings">
+                    <label>Bobber match <input id="match" type="number" min="0.4" max="0.98" step="0.01" value="0.72"></label>
+                    <label>Splash threshold <input id="splash" type="number" min="2" max="60" step="0.5" value="7"></label>
+                </div>
+                <div class="toolbar">
+                    <button id="save" disabled>Save calibration</button>
+                    <button id="redraw">Redraw boxes</button>
+                    <button id="cancel">Cancel</button>
+                </div>
+            </fieldset>
+            <form id="threshold-form" hidden>
+                <fieldset id="threshold-controls" disabled>
+                    <legend>Detection thresholds</legend>
+                    <label><span id="threshold-match-label">Match</span> <input id="threshold-match" type="number" step="any" required></label>
+                    <label><span id="threshold-splash-label">Splash</span> <input id="threshold-splash" type="number" step="any" required></label>
+                    <button type="submit">Save thresholds</button>
+                    <output id="threshold-result" role="status"></output>
+                </fieldset>
+            </form>
+            <form id="reel-delay-form" hidden>
+                <fieldset id="reel-delay-controls" disabled>
+                    <legend>Reel delay</legend>
+                    <label>Minimum (ms) <input id="reel-delay-minimum" type="number" min="0" step="1" required></label>
+                    <label>Maximum (ms) <input id="reel-delay-maximum" type="number" min="0" step="1" required></label>
+                    <button type="submit">Save reel delay</button>
+                    <output id="reel-delay-result" role="status"></output>
+                </fieldset>
+            </form>
+            <form id="cast-delay-form" hidden>
+                <fieldset id="cast-delay-controls" disabled>
+                    <legend>Cast delay</legend>
+                    <label>Minimum (ms) <input id="cast-delay-minimum" type="number" min="0" step="1" required></label>
+                    <label>Maximum (ms) <input id="cast-delay-maximum" type="number" min="0" step="1" required></label>
+                    <button type="submit">Save cast delay</button>
+                    <output id="cast-delay-result" role="status"></output>
+                </fieldset>
+            </form>
+            <p id="monitor" aria-live="off"></p>
+            <canvas id="screen" width="1280" height="720" aria-label="Capture card preview"></canvas>
+            <details id="preview-diagnostics" hidden>
+                <summary>Detection diagnostics</summary>
+                <p id="preview-state"></p>
+                <p id="preview-empty">No splash candidates yet.</p>
+                <ul id="preview-candidates"></ul>
+            </details>
+        </section>
+        <aside class="action-log" aria-labelledby="action-log-title">
+            <h2 id="action-log-title">Action log</h2>
+            <div class="log-scroll" role="region" aria-labelledby="action-log-title" tabindex="0">
+                <table aria-labelledby="action-log-title">
+                    <thead><tr><th scope="col">Time</th><th scope="col">Action</th><th scope="col">Values</th></tr></thead>
+                    <tbody id="action-log-rows"><tr><td colspan="3">Waiting for relay events.</td></tr></tbody>
+                </table>
+            </div>
+        </aside>
+    </main>
+<script>
+    const get = (id) => document.getElementById(id);
+    const token = document.querySelector('meta[name="dashboard-token"]').content;
+    const screen = get("screen");
+    const context = screen.getContext("2d");
+    const boxColors = { water: "#70d6ff", bobber: "#f7de64", bar: "#8df3bd" };
+    let status = {};
+    let bitmap;
+    let frozen;
+    let freezeFor;
+    let boxes = [];
+    let pointer;
+    let actionPending = false;
+    let imageGeneration = 0;
+    let displayedThresholds;
+    const delayActions = ["reel", "cast"];
+    const displayedDelays = new Map();
+    let displayedAction;
+    const logTime = new Intl.DateTimeFormat(undefined, { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+
+    async function request(path, payload) {
+        const options = path === "/status" || path === "/frame" ? {} : {
+            method: "POST",
+            headers: { "X-Dashboard-Token": token, "Content-Type": "application/json" },
+            body: payload === undefined ? undefined : JSON.stringify(payload),
+        };
+        const response = await fetch(path, { ...options, signal: AbortSignal.timeout(5000) });
+        if (!response.ok) throw new Error((await response.json()).error);
+        return response;
+    }
+
+    function controls() {
+        const running = status.mode === "running";
+        const v2 = status.detection_version === "v2";
+        const detection = get("detection");
+        detection.disabled = actionPending || !!frozen || !status.mode || running;
+        detection.value = status.detection_version || "v1";
+        detection.options[1].disabled = status.audio === "Off";
+        get("preview").disabled = actionPending || !!frozen || !status.mode || running;
+        get("freeze").disabled = actionPending || !!frozen || running || !status.ready;
+        get("freeze-bar").disabled = get("freeze").disabled || !status.calibrated;
+        get("freeze-icon").hidden = !v2;
+        get("freeze-icon").disabled = get("freeze-bar").disabled;
+        get("start").disabled = get("freeze-bar").disabled || !status.bar || !status.helper ||
+            (v2 && (!status.audio_ready || !status.icon_calibrated));
+        get("stop").disabled = actionPending || !running;
+        get("save").disabled = actionPending || boxes.length !== boxCount();
+        get("threshold-controls").disabled = actionPending || !!frozen || !status.thresholds;
+        for (const action of delayActions) {
+            get(`${action}-delay-controls`).disabled = actionPending || !status[`${action}_delay`];
+        }
+    }
+
+    function boxCount() {
+        return freezeFor === "water" ? 2 : 1;
+    }
+
+    function showStatus() {
+        get("message").textContent = status.message;
+        const details = [status.video, status.mode, `${status.detections} detections`, `${status.casts} casts`, `${status.reels} reels`, `${status.retries} retries`];
+        if (status.size) details.push(status.size.join(" × "));
+        const bar = status.bar_visible === null ? "checking" : status.bar_visible ? "visible" : "absent";
+        details.push(`Casting bar: ${status.bar ? bar : "needs calibration"}`);
+        if (status.audio === "Live") details.push(`HDMI audio ${status.audio_level} dBFS`);
+        else if (status.audio === "Silent") details.push("HDMI audio silent. Check the playback output.");
+        else if (status.audio === "Waiting") details.push("Waiting for HDMI audio");
+        else if (status.audio === "Off") details.push("HDMI audio off");
+        if (status.confidence !== null) details.push(`Match ${status.confidence}`);
+        if (status.motion !== null) details.push(`Motion ${status.motion}`);
+        if (status.fingerprint) {
+            const fingerprint = status.fingerprint;
+            if (status.bar_visible === true || !status.bar || !status.audio_ready) details.push(fingerprint.state);
+            if (fingerprint.clip) details.push(`${fingerprint.clip} ${fingerprint.score} (threshold ${fingerprint.threshold})`);
+        }
+        get("monitor").textContent = details.join(" · ");
+        showThresholds();
+        for (const action of delayActions) showDelay(action);
+        showPreviewDiagnostics(status.preview);
+        showActionLog(status.action_log);
+        controls();
+    }
+
+    function showActionLog(entries) {
+        if (!entries?.length) return;
+        const newest = `${entries[0].time}:${entries[0].id}`;
+        if (newest === displayedAction) return;
+        displayedAction = newest;
+        const rows = entries.map((entry) => {
+            const row = document.createElement("tr");
+            const time = row.insertCell();
+            time.className = "log-time";
+            time.textContent = logTime.format(new Date(entry.time * 1000));
+            row.insertCell().textContent = entry.action;
+            const values = row.insertCell();
+            for (const [name, value] of Object.entries(entry.values)) {
+                const pair = document.createElement("div");
+                const label = document.createElement("span");
+                label.className = "log-label";
+                label.textContent = `${name} `;
+                pair.append(label, Array.isArray(value) ? value.join(", ") : String(value));
+                values.append(pair);
+            }
+            if (!values.childElementCount) values.textContent = "—";
+            return row;
+        });
+        get("action-log-rows").replaceChildren(...rows);
+    }
+
+    function showThresholds() {
+        const thresholds = status.thresholds;
+        get("threshold-form").hidden = !thresholds;
+        if (!thresholds) {
+            displayedThresholds = undefined;
+            return;
+        }
+        const version = status.detection_version;
+        const saved = `${version}:${thresholds.match}:${thresholds.splash}`;
+        if (saved === displayedThresholds) return;
+        displayedThresholds = saved;
+        const v2 = version === "v2";
+        get("threshold-match-label").textContent = v2 ? "Icon match" : "Bobber match";
+        get("threshold-splash-label").textContent = v2 ? "Splash fingerprint" : "Splash motion";
+        const match = get("threshold-match");
+        match.min = v2 ? 0 : 0.4;
+        match.max = v2 ? 1 : 0.98;
+        match.value = thresholds.match;
+        const splash = get("threshold-splash");
+        splash.min = v2 ? 0 : 2;
+        splash.max = v2 ? 1 : 60;
+        splash.value = thresholds.splash;
+        get("threshold-result").textContent = "";
+    }
+
+    function showDelay(action) {
+        const delay = status[`${action}_delay`];
+        get(`${action}-delay-form`).hidden = !delay;
+        if (!delay) {
+            displayedDelays.delete(action);
+            return;
+        }
+        const saved = delay.join(":");
+        if (saved === displayedDelays.get(action)) return;
+        displayedDelays.set(action, saved);
+        get(`${action}-delay-minimum`).value = delay[0];
+        get(`${action}-delay-maximum`).value = delay[1];
+        get(`${action}-delay-result`).textContent = "";
+    }
+
+    function showPreviewDiagnostics(preview) {
+        get("preview-diagnostics").hidden = !preview;
+        if (!preview) return;
+
+        const threshold = preview.motion_threshold;
+        get("preview-state").textContent = threshold === null ? preview.state :
+            `${preview.state} · Current motion threshold ${threshold}`;
+        const rows = preview.candidates.map((candidate) => {
+            const row = document.createElement("li");
+            const offset = candidate.audio_offset;
+            let audio = "Audio off";
+            if (candidate.audio_required) {
+                audio = offset === null ? "No recent audio onset" :
+                    `Nearest observed onset ${Math.abs(offset)} ms ${offset < 0 ? "before" : "after"} visual motion`;
+            }
+            row.textContent = `${candidate.result} · Match ${candidate.match} · ` +
+                `Motion ${candidate.motion} (threshold ${candidate.threshold}) · ${audio}`;
+            return row;
+        });
+        get("preview-empty").hidden = rows.length > 0;
+        get("preview-candidates").replaceChildren(...rows);
+    }
+
+    function rectangle(box, color) {
+        if (!box) return;
+        context.lineWidth = 2;
+        context.strokeStyle = color;
+        context.strokeRect(...box);
+    }
+
+    function draw() {
+        context.clearRect(0, 0, screen.width, screen.height);
+        if (!bitmap) return;
+        context.drawImage(bitmap, 0, 0);
+        const barCalibration = frozen && freezeFor === "bar";
+        const iconCalibration = frozen && freezeFor === "icon";
+        if (frozen && freezeFor === "water") {
+            rectangle(boxes[0], boxColors.water);
+            rectangle(boxes[1], boxColors.bobber);
+        } else if (iconCalibration) {
+            rectangle(boxes[0], boxColors.bobber);
+        } else if (!frozen) {
+            rectangle(status.water, boxColors.water);
+            rectangle(status.bobber, boxColors.bobber);
+        }
+        rectangle(barCalibration ? boxes[0] : status.bar, boxColors.bar);
+        if (pointer) rectangle(selection(pointer.start, pointer.end),
+            barCalibration ? boxColors.bar : iconCalibration || boxes.length ? boxColors.bobber : boxColors.water);
+    }
+
+    function showBitmap(image) {
+        bitmap?.close();
+        bitmap = image;
+        if (image) {
+            screen.width = image.width;
+            screen.height = image.height;
+        }
+        draw();
+    }
+
+    function position(event) {
+        const rect = screen.getBoundingClientRect();
+        const coordinate = (value, start, display, actual) => Math.round(Math.max(0, Math.min(actual, (value - start) * actual / display)));
+        return [coordinate(event.clientX, rect.left, rect.width, screen.width), coordinate(event.clientY, rect.top, rect.height, screen.height)];
+    }
+
+    function selection(a, b) {
+        return [Math.min(a[0], b[0]), Math.min(a[1], b[1]), Math.abs(a[0] - b[0]), Math.abs(a[1] - b[1])];
+    }
+
+    function showCalibration() {
+        get("calibration").hidden = !frozen;
+        get("water-settings").hidden = freezeFor !== "water";
+        screen.classList.toggle("calibrating", !!frozen && boxes.length < boxCount());
+        const instructions = freezeFor === "bar" ? [
+            "Drag a tight box around the left end of the visible casting bar. Include its border and keep the text outside the box.",
+            "Save the casting bar or redraw the box.",
+        ] : [
+            "Drag a box around the water where the bobber can land.",
+            "Drag a tight box around the stationary bobber inside the water box.",
+            "Save these boxes or redraw them.",
+        ];
+        const iconInstructions = [
+            "Drag a box around the gold gear above the bobber. Include all teeth and a little surrounding water; leave the bobber and text outside. Minimum 12 pixels per side.",
+            "Save the interact icon or redraw the box. If the frozen gear is grey or blurry, cancel and freeze a clearer frame.",
+        ];
+        get("instruction").textContent = (freezeFor === "icon" ? iconInstructions : instructions)[boxes.length];
+        controls();
+        draw();
+    }
+
+    screen.addEventListener("pointerdown", (event) => {
+        if (!frozen || pointer || boxes.length === boxCount() || event.button !== 0) return;
+        screen.setPointerCapture(event.pointerId);
+        pointer = { id: event.pointerId, start: position(event), end: position(event) };
+    });
+    screen.addEventListener("pointermove", (event) => {
+        if (pointer?.id !== event.pointerId) return;
+        pointer.end = position(event);
+        draw();
+    });
+    screen.addEventListener("pointerup", (event) => {
+        if (pointer?.id !== event.pointerId) return;
+        const box = selection(pointer.start, position(event));
+        pointer = undefined;
+        const valid = freezeFor === "bar" ? box[2] >= 12 && box[3] >= 6
+            : freezeFor === "icon" ? box[2] >= 12 && box[3] >= 12 && box[2] <= 128 && box[3] <= 128
+            : box[2] >= 8 && box[3] >= 8;
+        if (valid) boxes.push(box);
+        else if (freezeFor === "icon") get("error").textContent = "Draw an icon box 12 to 128 pixels per side, including all gear teeth.";
+        showCalibration();
+    });
+    screen.addEventListener("pointercancel", () => { pointer = undefined; draw(); });
+
+    function run(action) {
+        return async () => {
+            if (actionPending) return;
+            get("error").textContent = "";
+            actionPending = true;
+            controls();
+            try {
+                await action();
+            } catch (error) {
+                get("error").textContent = error.message;
+            } finally {
+                actionPending = false;
+                controls();
+            }
+        };
+    }
+
+    for (const action of ["preview", "start", "stop"]) {
+        get(action).onclick = run(async () => {
+            status = await (await request(`/${action}`)).json();
+            showStatus();
+        });
+    }
+    get("detection").onchange = (event) => {
+        const version = event.target.value;
+        return run(async () => {
+            status = await (await request(`/detection/${version}`)).json();
+            showStatus();
+        })();
+    };
+    get("threshold-form").oninput = () => { get("threshold-result").textContent = ""; };
+    get("threshold-form").onsubmit = (event) => {
+        event.preventDefault();
+        const settings = {
+            version: status.detection_version,
+            match: get("threshold-match").valueAsNumber,
+            splash: get("threshold-splash").valueAsNumber,
+        };
+        return run(async () => {
+            status = await (await request("/thresholds", settings)).json();
+            showStatus();
+            get("threshold-result").textContent = "Saved.";
+        })();
+    };
+    for (const action of delayActions) {
+        const form = get(`${action}-delay-form`);
+        const result = get(`${action}-delay-result`);
+        form.oninput = () => { result.textContent = ""; };
+        form.onsubmit = (event) => {
+            event.preventDefault();
+            const minimum = get(`${action}-delay-minimum`).valueAsNumber;
+            const maximum = get(`${action}-delay-maximum`).valueAsNumber;
+            return run(async () => {
+                status = await (await request(`/${action}-delay`, { minimum, maximum })).json();
+                showStatus();
+                result.textContent = "Saved.";
+            })();
+        };
+    }
+    const calibrationButtons = [["freeze", "water"], ["freeze-bar", "bar"], ["freeze-icon", "icon"]];
+    for (const [button, kind] of calibrationButtons) {
+        get(button).onclick = run(async () => {
+            const response = await request("/freeze");
+            const image = await createImageBitmap(await response.blob());
+            imageGeneration++;
+            frozen = response.headers.get("X-Frame-Id");
+            freezeFor = kind;
+            boxes = [];
+            get("match").value = status.match;
+            get("splash").value = status.splash;
+            showBitmap(image);
+            showCalibration();
+        });
+    }
+    get("save").onclick = run(async () => {
+        const settings = freezeFor !== "water" ? { frame: frozen, [freezeFor]: boxes[0] } : {
+            frame: frozen, water: boxes[0], bobber: boxes[1],
+            match: get("match").valueAsNumber, splash: get("splash").valueAsNumber,
+        };
+        status = await (await request("/calibrate", settings)).json();
+        frozen = undefined;
+        showStatus();
+        showCalibration();
+    });
+    get("redraw").onclick = () => { boxes = []; pointer = undefined; get("error").textContent = ""; showCalibration(); };
+    get("cancel").onclick = () => { frozen = pointer = undefined; showCalibration(); };
+
+    async function poll() {
+        try {
+            const nextStatus = await (await request("/status")).json();
+            if (!actionPending) {
+                status = nextStatus;
+                showStatus();
+            }
+            if (!frozen) {
+                const generation = imageGeneration;
+                if (nextStatus.size) {
+                    const image = await createImageBitmap(await (await request("/frame")).blob());
+                    if (!frozen && generation === imageGeneration) showBitmap(image);
+                    else image.close();
+                } else {
+                    showBitmap(undefined);
+                }
+            }
+        } catch (error) {
+            if (!actionPending) get("message").textContent = `Preview unavailable. ${error.message}`;
+        } finally {
+            setTimeout(poll, 180);
+        }
+    }
+    poll();
+</script>
+</body>
+</html>

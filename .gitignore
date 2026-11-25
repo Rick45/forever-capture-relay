@@ -1,0 +1,5 @@
+__pycache__/
+.venv/
+calibration.json
+calibration.json.tmp
+.relay-secret

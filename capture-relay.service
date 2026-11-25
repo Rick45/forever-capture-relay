@@ -1,0 +1,21 @@
+[Unit]
+Description=Capture Relay dashboard
+After=network.target
+
+[Service]
+User=capture-relay
+SupplementaryGroups=video audio
+StateDirectory=capture-relay
+WorkingDirectory=/var/lib/capture-relay
+EnvironmentFile=/etc/capture-relay/relay.env
+ExecStart=/usr/bin/python3 /opt/capture-relay/relay.py --device ${CAPTURE_RELAY_DEVICE} --host ${CAPTURE_RELAY_HOST}
+Restart=on-failure
+RestartSec=3
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target
