@@ -2,7 +2,40 @@
 
 Capture Relay reads an HDMI source in a Debian VM and serves a local preview and calibration dashboard. An optional Windows helper sends the configured keys only to the selected foreground process.
 
+## Local development
+
+There is no build step. On Debian, install the capture tools and Python dependencies, then run from the repository root:
+
+```sh
+sudo apt install python3-opencv python3-numpy v4l-utils alsa-utils
+v4l2-ctl --list-devices
+python3 -B relay.py --device /dev/video0
+```
+
+Use the capture card's actual device path, preferably its stable symlink under `/dev/v4l/by-id/`. Open [the local dashboard](http://127.0.0.1:8080/). Without `--host`, the relay runs without Windows input. Calibration is saved as `calibration.json` in the working directory by default.
+
+For an isolated Python environment, install `requirements.txt` with `python -m pip install -r requirements.txt`; the system capture tools are still required. The Windows helper requires Node.js and Windows PowerShell and has no npm dependencies.
+
+`python3 relay.py --help` lists all capture options. Defaults are 1280×720, 30 FPS, MJPG, and dashboard port 8080. Use `--width`, `--height`, `--fps`, `--fourcc`, `--port`, and `--profile` to override them. A calibration profile must match the captured frame dimensions. Enable HDMI audio with `--audio-device` or `CAPTURE_RELAY_AUDIO`.
+
+## Repository layout
+
+| File | Purpose |
+| --- | --- |
+| `relay.py` | Video capture, dashboard server, detection/action loop, and Windows helper requests |
+| `detector.py` | Calibration profiles, casting-bar tracking, and V1 bobber/motion detection |
+| `audio.py` | HDMI audio capture through ALSA `arecord` |
+| `detector_v2.py`, `vendor/` | V2 interact-icon detection, audio fingerprints, reference assets, and upstream license |
+| `dashboard.html` | Dashboard UI, styles, and browser code |
+| `host.mjs`, `bridge.ps1` | Signed-command validation and Windows foreground checks/key input |
+| `start-input.ps1` | Windows launcher using the account's encrypted credential |
+| `capture-relay.service` | Debian systemd service definition |
+| `test_relay.py`, `test_host.mjs` | Python and Windows helper checks |
+| `replay.py` | V1 visual detection replay for a saved video of one cast |
+
 ## Current setup
+
+The following addresses and paths describe the existing installation; use your own addresses for a new deployment.
 
 Proxmox VM 108 is named `capture-relay`. It uses the UGREEN HDMI capture card on Proxmox USB port `6-2`. The guest service is `capture-relay.service`. Runtime files live in `/opt/capture-relay`, calibration lives in `/var/lib/capture-relay`, and the root-only environment file is `/etc/capture-relay/relay.env`.
 
@@ -64,4 +97,36 @@ V2 runs the icon search and audio fingerprint detector from [wow-fishing-forever
 
 On Debian 13, install `python3-opencv`, `python3-numpy`, `v4l-utils`, and `alsa-utils`. Check the capture device with `v4l2-ctl --list-devices` and use its video symlink under `/dev/v4l/by-id/`. The service expects the device path in `CAPTURE_RELAY_DEVICE`, the Windows URL in `CAPTURE_RELAY_HOST`, and a shared 64-character hex key in `CAPTURE_RELAY_SECRET`. Set `CAPTURE_RELAY_AUDIO` to the ALSA input name to enable audio. Set `CAPTURE_RELAY_LAN_ADDRESS`, `CAPTURE_RELAY_LAN_NETWORK`, and a separate dashboard password in `CAPTURE_RELAY_DASHBOARD_PASSWORD` to serve the dashboard on the LAN.
 
-Run `python3 -B -m unittest -v` from the installation directory to check the detector and loop. On Windows, `node .\test_host.mjs` checks signature, expiry, replay, and foreground handling. Run `python3 replay.py clip.mp4` with a calibration file and a recording at the same dimensions to check detection with real footage.
+The service runs as `capture-relay` with video/audio group access. Install `relay.py`, `detector.py`, `detector_v2.py`, `audio.py`, `dashboard.html`, and the complete `vendor/` directory in `/opt/capture-relay`. Its `StateDirectory` creates `/var/lib/capture-relay`, and its working directory puts the default calibration profile there.
+
+Device and helper environment variables are expanded by the service unit; when running `relay.py` directly, use `--device` and `--host`. Without LAN settings, the dashboard binds to `127.0.0.1`. LAN access requires a private IPv4 network in CIDR notation containing the configured address and allowed clients, plus a dashboard password of at least 16 characters. It listens on all IPv4 interfaces but checks the configured network, dashboard Host header, and credentials. HTTP does not encrypt the dashboard password or preview; use the SSH tunnel when encryption is needed. Keep the environment file root-only and keep secrets and calibration files out of Git.
+
+On Windows, install `start-input.ps1`, `host.mjs`, and `bridge.ps1` together under `%LOCALAPPDATA%\CaptureRelay`. The launcher expects a `.relay-secret` file encrypted by the same Windows account using PowerShell `ConvertFrom-SecureString`, containing the shared key used by Debian. The credential is local to that account and machine. Run `node .\host.mjs --help` for direct-launch options, including a custom helper port.
+
+After updating runtime files, restart and inspect the service:
+
+```sh
+sudo systemctl restart capture-relay.service
+sudo systemctl status capture-relay.service
+sudo journalctl -u capture-relay.service -n 100 --no-pager
+```
+
+If the unit file changed, run `sudo systemctl daemon-reload` before restarting.
+
+## Development checks
+
+From the repository root, run the Python tests with the dependencies installed:
+
+```sh
+python3 -B -m unittest -v
+```
+
+These checks use synthetic frames and fake capture/helper objects, so capture hardware is not required. On Windows, run the helper checks:
+
+```powershell
+node .\test_host.mjs
+```
+
+They check signature, expiry, replay rejection, and foreground handling. For hardware verification, use **Preview only** to check casting-bar state, marker/icon tracking, audio, and one detection per bite before testing **Start** and **Stop** with the selected target window in front. Confirm saved calibration, thresholds, and delay ranges survive a service restart.
+
+Use `python3 replay.py clip.mp4 --profile calibration.json` to check V1 visual detection on a recording of a single cast at the calibration dimensions. Replay sends no keys and does not test V2 audio fingerprints or the automated action loop.
