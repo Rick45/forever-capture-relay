@@ -66,6 +66,8 @@ The Windows helper listens on TCP 8765 and accepts signed commands from the spec
 
 ## Calibrate the preview
 
+The dashboard's **Bot checklist** shows which setup requirements are met for the selected detector and how to complete missing items. Separate live checks show whether detection is active, the casting bar is visible, and the bobber or gold icon is tracked. A saved calibration does not guarantee a live match: confirm those checks during a manual cast in **Preview only**. The helper check confirms configuration; connection and foreground checks happen during a run. Game visibility and key bindings must be checked manually.
+
 1. In Windows Display settings, duplicate the source display to the HDMI output connected to the capture card. Check that the dashboard shows that display.
 2. Trigger the first action manually. Once the marker is visible and settled, select **Freeze frame to calibrate**. Draw a box around the expected landing area and a second, tight box around the marker. Save the calibration.
 3. Cast by hand and select **Calibrate casting bar** while it is visible. Draw a tight box around the left end, including its border and avoiding text. Save the box. A new bar calibration keeps the saved water and marker boxes.

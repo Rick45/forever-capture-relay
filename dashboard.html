@@ -16,8 +16,8 @@
         button:disabled { opacity: .5; cursor: default; }
         #start { background: #205948; }
         #stop { background: #622c37; }
-        #monitor { color: #b9cddc; font-size: .9rem; }
-        #message { min-height: 1.5em; }
+        #monitor { color: #b9cddc; font-size: .9rem; height: 4.5em; overflow-y: auto; scrollbar-gutter: stable; }
+        #message { height: 3em; overflow-y: auto; scrollbar-gutter: stable; }
         #error { color: #ffacac; }
         #error:empty { display: none; }
         canvas { display: block; width: 100%; background: #0a1014; border-radius: 8px; touch-action: none; }
@@ -29,17 +29,32 @@
         .action-log { position: sticky; top: 20px; min-width: 0; border: 1px solid #526878; border-radius: 8px; }
         .action-log h2 { margin: 0; padding: 10px 12px; font-size: 1rem; }
         .log-scroll { max-height: min(72vh, 780px); overflow: auto; overscroll-behavior: contain; }
-        .log-scroll:focus-visible { outline: 2px solid #70d6ff; outline-offset: 2px; }
+        .log-scroll:focus-visible, .checklist-content:focus-visible, #monitor:focus-visible { outline: 2px solid #70d6ff; outline-offset: 2px; }
         .action-log table { width: 100%; border-spacing: 0; font-size: .82rem; }
         .action-log th, .action-log td { padding: 7px 8px; text-align: left; vertical-align: top; }
         .action-log th { position: sticky; top: 0; z-index: 1; background: #233441; }
         .action-log td { border-top: 1px solid #344858; overflow-wrap: anywhere; }
         .log-time { white-space: nowrap; font-variant-numeric: tabular-nums; }
         .log-label { color: #b9cddc; }
+        .checklist { margin: 16px 0; padding: 12px; border: 1px solid #526878; border-radius: 8px; background: #16252e; }
+        .checklist summary { cursor: pointer; font-weight: 600; }
+        .checklist-content { height: 24rem; overflow-y: auto; scrollbar-gutter: stable; margin-top: 8px; padding-right: 6px; }
+        .checklist p { font-size: .9rem; color: #b9cddc; }
+        .checklist h3 { font-size: .9rem; margin: 12px 0 0; color: #b9cddc; }
+        .checklist ul { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 260px), 1fr)); gap: 10px 18px; padding: 0; margin: 12px 0; list-style: none; }
+        .checklist li { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 8px; align-items: start; }
+        .checklist small { display: block; color: #b9cddc; }
+        .check-badge { font-size: .78rem; font-weight: 600; padding: 2px 7px; border-radius: 4px; background: #334651; color: #dce7ee; white-space: nowrap; }
+        .check-badge.met { background: #20513e; color: #b9f5d5; }
+        .check-badge.missing { background: #583d22; color: #ffdbab; }
         @media (max-width: 960px) {
             .workspace { grid-template-columns: minmax(0, 1fr); }
             .action-log { position: static; }
             .log-scroll { max-height: 420px; }
+        }
+        @media (max-width: 600px) {
+            #monitor { height: 7.5em; }
+            #message { height: 4.5em; }
         }
     </style>
 </head>
@@ -63,6 +78,17 @@
                 <button id="start" disabled>Start</button>
                 <button id="stop" disabled>Stop</button>
             </div>
+            <details class="checklist" open>
+                <summary>Bot checklist</summary>
+                <div class="checklist-content" role="region" aria-label="Bot checklist status" tabindex="0">
+                    <p id="checklist-summary" role="status">Waiting for relay status.</p>
+                    <h3>Setup requirements</h3>
+                    <ul id="setup-checks" aria-label="Setup requirements"></ul>
+                    <h3>Live detection checks</h3>
+                    <ul id="cast-checks" aria-label="Live detection checks"></ul>
+                    <p id="game-checks">Check in game: show WoW on the captured display, match the helper's cast and reel keys to your game bindings, and keep WoW in the foreground during a run. These settings cannot be verified here.</p>
+                </div>
+            </details>
             <fieldset id="calibration" hidden>
                 <legend>Calibration</legend>
                 <p id="instruction"></p>
@@ -103,7 +129,7 @@
                     <output id="cast-delay-result" role="status"></output>
                 </fieldset>
             </form>
-            <p id="monitor" aria-live="off"></p>
+            <p id="monitor" aria-live="off" role="region" aria-label="Live capture status" tabindex="0"></p>
             <canvas id="screen" width="1280" height="720" aria-label="Capture card preview"></canvas>
             <details id="preview-diagnostics" hidden>
                 <summary>Detection diagnostics</summary>
@@ -201,7 +227,66 @@
         for (const action of delayActions) showDelay(action);
         showPreviewDiagnostics(status.preview);
         showActionLog(status.action_log);
+        showChecklist();
         controls();
+    }
+
+    function showChecklist(connected = true) {
+        const v2 = status.detection_version === "v2";
+        const known = connected && !!status.mode;
+        const audioRequired = v2 || status.audio !== "Off";
+        const requirements = [
+            ["Live capture video", status.ready, "Video is arriving.", "Check the capture card and video source."],
+            ["Water and bobber calibration", status.calibrated, "Saved for the current capture resolution.", "Freeze a frame, select the water and bobber, and save at the current resolution."],
+            ["Casting-bar calibration", status.calibrated && !!status.bar, "Saved. Confirm the bar is detected during a manual cast below.", "Use Calibrate casting bar while fishing. Include the left border and exclude text."],
+            ["Windows helper configured", status.helper, "Configured. Connection and foreground checks happen during Start.", "Start the Windows helper and configure its address on the relay. Preview works without it."],
+        ];
+        if (v2) requirements.push(["Gold interact-icon calibration", status.calibrated && status.icon_calibrated,
+            "Saved. Confirm the icon is tracked during a manual cast below.",
+            "Enable the gold gear in game, then use Calibrate interact icon and save the selection."]);
+        if (audioRequired) requirements.push(["HDMI audio arriving", status.audio_ready,
+            status.audio === "Silent" ? "Audio is arriving but silent. Check the game's playback output if bites are missed." : "Audio is arriving from the capture card.",
+            "Check the HDMI audio input and route game sound to the captured display."]);
+        requirements.push(["Calibration image closed", !frozen, "Live preview can update.", "Save or cancel the frozen calibration image."]);
+
+        const render = (items) => items.map(([label, met, passed, missing, waiting = false]) => {
+            const row = document.createElement("li");
+            const badge = document.createElement("span");
+            badge.className = `check-badge ${known ? met ? "met" : waiting ? "" : "missing" : ""}`;
+            badge.textContent = known ? met ? "✓ Met" : waiting ? "Waiting" : "Needed" : "Unknown";
+            const text = document.createElement("div");
+            const title = document.createElement("strong");
+            title.textContent = label;
+            const detail = document.createElement("small");
+            detail.textContent = known ? met ? passed : missing : "Waiting for a fresh relay status.";
+            text.append(title, detail);
+            row.append(badge, text);
+            return row;
+        });
+        get("setup-checks").replaceChildren(...render(requirements));
+        const detecting = status.mode === "preview" || status.mode === "running";
+        const liveChecks = [
+            ["Detection active", detecting, status.mode === "running" ? "Bot running. Use Stop to end the run." : "Preview only. No keys are sent.", "Select Preview only to test detection, or Start to run the bot."],
+            ["Casting bar visible during a cast", status.ready && status.bar_visible === true,
+                "Casting bar detected.", status.mode === "running" && status.phase === "waiting_bar"
+                    ? "The bot is waiting for this bar before searching for the icon or bobber. If it is visible in game, recalibrate it."
+                    : "Expected while fishing. Cast manually in Preview only; recalibrate if the visible bar is missed.", true],
+            [v2 ? "Gold icon tracked" : "Bobber tracked", detecting && status.ready && !!status.bobber,
+                "The detected target is highlighted in the preview.",
+                v2 ? "Cast with the gold gear visible inside the calibrated water area or just above it."
+                    : "Cast inside the calibrated water area. Check the casting bar and bobber calibration if tracking stays missing.", true],
+        ];
+        get("cast-checks").replaceChildren(...render(liveChecks));
+        get("game-checks").textContent = "Check in game: show WoW on the captured display, match the helper's cast and reel keys to your game bindings, and keep WoW in the foreground during a run. "
+            + (v2 ? "Enable the gold interact icon and bind the reel key to Interact With Target. " : "")
+            + "These settings cannot be verified here.";
+        const met = requirements.filter(([, passed]) => passed).length;
+        const summary = !known ? "Connection unavailable. Checklist status is unknown."
+            : met === requirements.length ? status.mode === "running"
+                ? "All setup checks met. Bot running; follow the live detection checks below."
+                : "All setup checks met. Use Preview only to confirm tracking and a bite before Start."
+            : `${met} of ${requirements.length} setup checks met. Follow the Needed items below. Preview only sends no keys.`;
+        if (get("checklist-summary").textContent !== summary) get("checklist-summary").textContent = summary;
     }
 
     function showActionLog(entries) {
@@ -357,6 +442,7 @@
             "Save the interact icon or redraw the box. If the frozen gear is grey or blurry, cancel and freeze a clearer frame.",
         ];
         get("instruction").textContent = (freezeFor === "icon" ? iconInstructions : instructions)[boxes.length];
+        showChecklist();
         controls();
         draw();
     }
@@ -489,7 +575,10 @@
                 }
             }
         } catch (error) {
-            if (!actionPending) get("message").textContent = `Preview unavailable. ${error.message}`;
+            if (!actionPending) {
+                get("message").textContent = `Preview unavailable. ${error.message}`;
+                showChecklist(false);
+            }
         } finally {
             setTimeout(poll, 180);
         }
