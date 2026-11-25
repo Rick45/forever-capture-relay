@@ -541,16 +541,12 @@ class CaptureLoop:
         if not self.detector or self.mode == "paused":
             return
         v2 = isinstance(self.detector, WowfishDetector)
-        if v2 and not self.audio_ready(now):
-            if self.mode == "running":
-                raise RuntimeError("V2 paused because HDMI audio stopped arriving.")
-            if self.detector.box:
-                self.reset_detector()
-            return
+        if v2 and self.mode == "running" and not self.audio_ready(now):
+            raise RuntimeError("V2 paused because HDMI audio stopped arriving.")
         if self.mode == "running":
             if not self.track_active_cast(now, index):
                 return
-        elif self.bar_tracker:
+        elif self.bar_tracker and not v2:
             if self.bar_tracker.visible is not True:
                 if self.phase != "waiting_bar":
                     self.reset_detector("Casting bar disappeared")
@@ -576,7 +572,7 @@ class CaptureLoop:
         self.seen_frame = index
         had_lock = self.detector.box is not None
         if v2:
-            bite = self.detector.step(frame, now)
+            bite = self.detector.step(frame, now, listen=self.audio_ready(now))
         else:
             audio_peak = self.audio.recent_peak(now) if self.audio else None
             bite = self.detector.step(frame, now, audio_peak)

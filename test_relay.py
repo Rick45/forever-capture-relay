@@ -299,6 +299,47 @@ class CaptureTests(unittest.TestCase):
         self.assertEqual(self.loop.status()["detection_version"], "v1")
         self.assertIsNotNone(self.loop.status()["preview"])
 
+    def test_v2_preview_tracks_icon_without_casting_bar_or_live_audio(self):
+        templates, _ = detection_assets()
+        gear = templates[0]
+        frame = self.inactive.copy()
+        sample = frame[25:25 + gear.size, 104:104 + gear.size]
+        sample[gear.mask > 0] = gear.bgr[gear.mask > 0]
+        replace(self.calibration, interact_icon=(gear.size, 0.8)).save(self.path)
+        audio = AudioCapture("test")
+        self.loop = CaptureLoop(self.capture, self.helper, self.path, audio)
+        self.loop.select_detection("v2")
+        self.loop.control("preview")
+
+        # Missing audio and an absent bar must not hide the visual match.
+        self.feed(frame)
+        self.assertFalse(self.loop.status()["audio_ready"])
+        self.assertIsNotNone(self.loop.status()["bobber"])
+        self.assertIn("Waiting for live HDMI audio", self.loop.detector.state)
+        self.assertEqual(self.loop.detected, 0)
+        self.assertEqual(self.helper.sent, [])
+        with self.assertRaisesRegex(ValueError, "live HDMI audio"):
+            self.loop.control("start")
+
+        # Restoring audio still permits tracking with the bar absent.
+        audio.sample = (self.clock, -20, None, self.clock)
+        self.feed(frame, 0.3)
+        self.feed(frame, 0.1)
+        self.assertTrue(self.loop.status()["audio_ready"])
+        self.assertIs(self.loop.status()["bar_visible"], False)
+        self.assertIsNotNone(self.loop.status()["bobber"])
+        self.assertIn("Listening for a splash", self.loop.detector.state)
+
+        # Losing audio discards queued samples, keeping preview visual only.
+        cursor = audio.pcm_cursor()
+        with patch.object(audio, "pcm_after", side_effect=AssertionError("read stale audio")):
+            self.feed(frame, 1.1)
+        self.assertEqual(self.loop.detector.audio_cursor, cursor)
+        self.assertIsNotNone(self.loop.status()["bobber"])
+        self.assertEqual(self.loop.detected, 0)
+        self.feed(self.inactive, 0.8)
+        self.assertIsNone(self.loop.status()["bobber"])
+
     def test_v2_accepts_small_hdmi_gear_with_a_strong_template_match(self):
         box = [111, 55, 18, 18]
         scale = IconScale(16, 29, 0.831, 26, 26, gold=0.299, prominence=0.172)

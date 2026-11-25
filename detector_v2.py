@@ -135,7 +135,7 @@ class WowfishDetector:
             return match.x + self.left, match.y + self.top, match.size
         return None
 
-    def step(self, frame, now):
+    def step(self, frame, now, *, listen=True):
         if self.fired:
             return False
         icon = self.locate_icon(frame)
@@ -144,13 +144,22 @@ class WowfishDetector:
             self.icon_score = self.confidence
             if self.box is None:
                 self.audio_cursor = self.audio.pcm_cursor()
-                self.state = "Gold icon found. Listening for a splash fingerprint."
+            self.state = "Gold icon found. Listening for a splash fingerprint."
             self.box = (x - size // 2, y - size // 2, size, size)
             self.last_seen = now
+        if not listen:
+            # Keep visual preview useful while audio is unavailable. Discard old
+            # samples so reconnecting audio cannot confirm a stale splash.
+            self.bites.reset()
+            self.audio_cursor = self.audio.pcm_cursor()
         if self.box is None:
             return False
         if now - self.last_seen >= 0.75:
             self.reset()
+            return False
+
+        if not listen:
+            self.state = "Gold icon found. Waiting for live HDMI audio."
             return False
 
         sample_rate = self.bites.p.sample_rate
